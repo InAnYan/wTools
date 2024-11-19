@@ -32,6 +32,8 @@
 mod private
 {
 
+  use std::borrow::Cow;
+
   use crate::*;
   use print::
   {
@@ -76,6 +78,67 @@ mod private
     {
       super::table::Table::instance()
     }
+  }
+
+  pub fn table_data_write< 'buf, 'data, 'context >
+  (
+    column_names : &Vec< Cow< 'data, str > >,
+    rows : &Vec< Vec< Cow< 'data, str > > >,
+    has_header : bool,
+    filter_col : &'context ( dyn FilterCol + 'context ),
+    filter_row : &'context ( dyn FilterRow + 'context ),
+    output_format : impl TableOutputFormat,
+    c : &mut Context< 'buf >,
+  ) -> fmt::Result
+  {
+    struct CellsWrapper< 'data >
+    {
+      column_names : &'data Vec< Cow< 'data, str > >,
+      row : &'data Vec< Cow< 'data, str > >,
+    }
+
+    impl< 'data > Cells< str > for CellsWrapper< 'data >
+    {
+      fn cells< 'a, 'b >( &'a self ) -> impl IteratorTrait< Item = ( &'b str, Option< Cow< 'b, str > > ) >
+      where
+        'a : 'b,
+      {
+        self.row.iter().enumerate().map( | ( i, c ) | ( self.column_names[ i ].as_ref(), Some( c.clone() ) ) )
+      }
+    }
+
+    struct TableWrapper< 'data >
+    {
+      column_names : &'data Vec< Cow< 'data, str > >,
+      has_header : bool,
+      rows : &'data Vec< Vec< Cow< 'data, str > > >,
+    }
+
+    impl< 'data > TableRows for TableWrapper< 'data >
+    {
+      type RowKey = usize;
+
+      type Row = CellsWrapper< 'data >;
+
+      type CellKey = Cow< 'data, str >;
+
+      fn rows( &self ) -> impl IteratorTrait< Item = &Self::Row >
+      {
+        use std::iter;
+
+        iter::once( self.column_names )
+        .chain( self.rows.iter() )
+        .skip( if self.has_header { 1 } else { 0 } )
+        .map( | row | CellsWrapper { column_names : self.column_names, row } )
+      }
+    }
+
+    let wrapped_table = TableWrapper { column_names, has_header, rows };
+
+    InputExtract::extract( &wrapped_table, filter_col, filter_row, | x |
+    {
+      output_format.extract_write( x, c )
+    })
   }
 
 }
